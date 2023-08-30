@@ -16,12 +16,15 @@ import (
 
 var _ Serializer = &SerializerCDX{}
 
+type CDXRootScheme func(ctx context.Context, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error)
+
 type SerializerCDX struct {
-	encoding cdx.BOMFileFormat
-	version  cdx.SpecVersion
+	encoding   cdx.BOMFileFormat
+	version    cdx.SpecVersion
+	rootScheme CDXRootScheme
 }
 
-func NewCDX(version, encoding string) *SerializerCDX {
+func NewCDX(version, encoding string, rootScheme CDXRootScheme) *SerializerCDX {
 	var format cdx.BOMFileFormat
 	if encoding == formats.XML {
 		format = cdx.BOMFileFormatXML
@@ -46,8 +49,9 @@ func NewCDX(version, encoding string) *SerializerCDX {
 	}
 
 	return &SerializerCDX{
-		encoding: format,
-		version:  specVersion,
+		encoding:   format,
+		version:    specVersion,
+		rootScheme: rootScheme,
 	}
 }
 
@@ -82,9 +86,13 @@ func (s *SerializerCDX) Serialize(bom *sbom.Document) (interface{}, error) {
 	doc.Components = &[]cdx.Component{}
 	doc.Dependencies = &[]cdx.Dependency{}
 
-	rootComponent, err := s.root(ctx, bom)
+	rootsComponent, err := s.roots(ctx, bom)
 	if err != nil {
 		return nil, fmt.Errorf("generating SBOM root component: %w", err)
+	}
+	rootComponent, rootSubComponents, rootDependencies, err := s.selectRoot(ctx, rootsComponent, s.rootScheme)
+	if err != nil {
+		return nil, err
 	}
 
 	doc.Metadata.Component = rootComponent
@@ -111,9 +119,12 @@ func (s *SerializerCDX) Serialize(bom *sbom.Document) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	deps = append(deps, rootDependencies...)
 	doc.Dependencies = &deps
 
 	components := state.components()
+	components = append(components, rootSubComponents...)
+
 	clearAutoRefs(&components)
 	doc.Components = &components
 
@@ -157,34 +168,48 @@ func (s *SerializerCDX) componentsMaps(ctx context.Context, bom *sbom.Document) 
 	return nil
 }
 
-func (s *SerializerCDX) root(ctx context.Context, bom *sbom.Document) (*cdx.Component, error) {
-	var rootComp *cdx.Component
+// selectRoot
+// When only one root is available it is selected as the top level.
+// Otherwise roots are mapped according to the scheme function,
+//   - Virtual Root Scheme: <Default> Virtual root is created at the top level of the SBOM,
+//     All roots are attached as sub-components and connected through the graph to the top level virtual root.
+func (s *SerializerCDX) selectRoot(ctx context.Context, rootsComp []cdx.Component, scheme CDXRootScheme) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
+	var root *cdx.Component
+	var dependencies []cdx.Dependency
+	var components []cdx.Component
+	// If only one root return it
+	switch len(rootsComp) {
+	case 0:
+		return root, components, dependencies, fmt.Errorf("no root provided")
+	case 1:
+		root = &rootsComp[0]
+	default:
+		return scheme(ctx, rootsComp)
+	}
+
+	return root, rootsComp, dependencies, nil
+}
+
+func (s *SerializerCDX) roots(ctx context.Context, bom *sbom.Document) ([]cdx.Component, error) {
+	var rootsComp []cdx.Component
+
 	// First, assign the top level nodes
 	state, err := getCDXState(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reading state: %w", err)
 	}
 
-	// 2DO Use GetRootNodes() https://github.com/bom-squad/protobom/pull/20
-	if bom.NodeList.RootElements != nil && len(bom.NodeList.RootElements) > 0 {
-		for _, id := range bom.NodeList.RootElements {
-			// Search for the node and add it
-			for _, n := range bom.NodeList.Nodes {
-				if n.Id == id {
-					rootComp = s.nodeToComponent(n)
-					state.addedDict[id] = struct{}{}
-				}
-			}
-
-			// TODO(degradation): Here we would document other root level elements
-			// are not added to to document
-			if true { // temp workaround in favor of adding a lint tag
-				break
+	for _, id := range bom.NodeList.GetRootElements() {
+		// Search for the node and add it
+		for _, n := range bom.NodeList.Nodes {
+			if n.Id == id {
+				rootsComp = append(rootsComp, *s.nodeToComponent(n))
+				state.addedDict[id] = struct{}{}
 			}
 		}
 	}
 
-	return rootComp, nil
+	return rootsComp, nil
 }
 
 // NOTE dependencies function modifies the components dictionary
@@ -378,4 +403,28 @@ func getCDXState(ctx context.Context) (*serializerCDXState, error) {
 		return nil, errors.New("unable to cast serializer state from context")
 	}
 	return dm, nil
+}
+
+func VirtualRootScheme(ctx context.Context, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
+	var dependencies []cdx.Dependency
+	VirtualRootRef := "virtual-ref"
+	var hashs []cdx.Hash
+	for _, root := range rootsComp {
+		if root.Hashes != nil {
+			hashs = append(hashs, *root.Hashes...)
+		}
+		dependencies = append(dependencies, cdx.Dependency{
+			Ref:          VirtualRootRef,
+			Dependencies: &[]string{root.BOMRef},
+		})
+	}
+
+	root := cdx.Component{
+		BOMRef:      VirtualRootRef,
+		Name:        "virtual",
+		Description: "virtual root scheme, refer roots through dependencies",
+		Hashes:      &hashs,
+	}
+
+	return &root, rootsComp, dependencies, nil
 }

@@ -25,6 +25,12 @@ func WithIndent(i int) WriterOption {
 	}
 }
 
+func WithCDXRootScheme(cdxRootScheme serializer.CDXRootScheme) WriterOption {
+	return func(w *Writer) {
+		w.cdxRootScheme = cdxRootScheme
+	}
+}
+
 type Options struct {
 	Format formats.Format `yaml:"format,omitempty" json:"format,omitempty"`
 	Indent int            `yaml:"indent,omitempty" json:"indent,omitempty"`

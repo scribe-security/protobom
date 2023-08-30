@@ -12,17 +12,19 @@ import (
 )
 
 type Writer struct {
-	serializer serializer.Serializer
-	ident      int
-	format     formats.Format
+	serializer    serializer.Serializer
+	ident         int
+	format        formats.Format
+	cdxRootScheme serializer.CDXRootScheme
 }
 
 const defaultIdent = 4
 
 func New(opts ...WriterOption) *Writer {
 	r := &Writer{
-		ident:  defaultIdent,
-		format: formats.CDX15JSON, // TODO: should we really default to format? or should we crash if not set?
+		ident:         defaultIdent,
+		format:        formats.CDX15JSON, // TODO: should we really default to format? or should we crash if not set?
+		cdxRootScheme: serializer.VirtualRootScheme,
 	}
 
 	for _, opt := range opts {
@@ -38,7 +40,7 @@ func New(opts ...WriterOption) *Writer {
 
 func (w *Writer) createSerializer(format formats.Format) serializer.Serializer {
 	if format.Type() == formats.CDXFORMAT {
-		return serializer.NewCDX(format.Version(), format.Encoding())
+		return serializer.NewCDX(format.Version(), format.Encoding(), w.cdxRootScheme)
 	}
 
 	if format.Type() == formats.SPDXFORMAT {
