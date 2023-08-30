@@ -16,7 +16,7 @@ import (
 
 var _ Serializer = &SerializerCDX{}
 
-type CDXRootScheme func(ctx context.Context, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error)
+type CDXRootScheme func(ctx context.Context, bom *sbom.Document, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error)
 
 type SerializerCDX struct {
 	encoding   cdx.BOMFileFormat
@@ -56,11 +56,13 @@ func NewCDX(version, encoding string, rootScheme CDXRootScheme) *SerializerCDX {
 }
 
 const (
-	stateKey state = "cyclonedx_serializer_state"
+	stateKey               state           = "cyclonedx_serializer_state"
+	virtualCompDescription CompDescription = "virtual root scheme, refer roots through dependencies"
 )
 
 type (
-	state string
+	state           string
+	CompDescription string
 )
 
 func (s *SerializerCDX) Serialize(bom *sbom.Document) (interface{}, error) {
@@ -86,11 +88,7 @@ func (s *SerializerCDX) Serialize(bom *sbom.Document) (interface{}, error) {
 	doc.Components = &[]cdx.Component{}
 	doc.Dependencies = &[]cdx.Dependency{}
 
-	rootsComponent, err := s.roots(ctx, bom)
-	if err != nil {
-		return nil, fmt.Errorf("generating SBOM root component: %w", err)
-	}
-	rootComponent, rootSubComponents, rootDependencies, err := s.selectRoot(ctx, rootsComponent, s.rootScheme)
+	rootComponent, rootSubComponents, rootDependencies, err := s.selectRoot(ctx, bom, s.rootScheme)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +123,8 @@ func (s *SerializerCDX) Serialize(bom *sbom.Document) (interface{}, error) {
 	components := state.components()
 	components = append(components, rootSubComponents...)
 
-	clearAutoRefs(&components)
-	doc.Components = &components
+	clearAutoRefs(&rootSubComponents)
+	doc.Components = &rootSubComponents
 
 	return doc, nil
 }
@@ -173,21 +171,27 @@ func (s *SerializerCDX) componentsMaps(ctx context.Context, bom *sbom.Document) 
 // Otherwise roots are mapped according to the scheme function,
 //   - Virtual Root Scheme: <Default> Virtual root is created at the top level of the SBOM,
 //     All roots are attached as sub-components and connected through the graph to the top level virtual root.
-func (s *SerializerCDX) selectRoot(ctx context.Context, rootsComp []cdx.Component, scheme CDXRootScheme) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
+func (s *SerializerCDX) selectRoot(ctx context.Context, bom *sbom.Document, scheme CDXRootScheme) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
 	var root *cdx.Component
 	var dependencies []cdx.Dependency
 	var components []cdx.Component
+
+	rootsComponent, err := s.roots(ctx, bom)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generating SBOM root component: %w", err)
+	}
+
 	// If only one root return it
-	switch len(rootsComp) {
+	switch len(rootsComponent) {
 	case 0:
 		return root, components, dependencies, fmt.Errorf("no root provided")
 	case 1:
-		root = &rootsComp[0]
+		root = &rootsComponent[0]
 	default:
-		return scheme(ctx, rootsComp)
+		return scheme(ctx, bom, rootsComponent)
 	}
 
-	return root, rootsComp, dependencies, nil
+	return root, rootsComponent, dependencies, nil
 }
 
 func (s *SerializerCDX) roots(ctx context.Context, bom *sbom.Document) ([]cdx.Component, error) {
@@ -405,24 +409,24 @@ func getCDXState(ctx context.Context) (*serializerCDXState, error) {
 	return dm, nil
 }
 
-func VirtualRootScheme(ctx context.Context, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
+func VirtualRootScheme(ctx context.Context, bom *sbom.Document, rootsComp []cdx.Component) (*cdx.Component, []cdx.Component, []cdx.Dependency, error) {
 	var dependencies []cdx.Dependency
-	VirtualRootRef := "virtual-ref"
 	var hashs []cdx.Hash
-	for _, root := range rootsComp {
-		if root.Hashes != nil {
-			hashs = append(hashs, *root.Hashes...)
+	for _, r := range rootsComp {
+		if r.Hashes != nil {
+			hashs = append(hashs, *r.Hashes...)
 		}
 		dependencies = append(dependencies, cdx.Dependency{
-			Ref:          VirtualRootRef,
-			Dependencies: &[]string{root.BOMRef},
+			Ref:          bom.Metadata.Id,
+			Dependencies: &[]string{r.BOMRef},
 		})
 	}
 
 	root := cdx.Component{
-		BOMRef:      VirtualRootRef,
-		Name:        "virtual",
-		Description: "virtual root scheme, refer roots through dependencies",
+		BOMRef:      bom.Metadata.Id,
+		Name:        bom.Metadata.Name,
+		Version:     bom.Metadata.Version,
+		Description: string(virtualCompDescription),
 		Hashes:      &hashs,
 	}
 
