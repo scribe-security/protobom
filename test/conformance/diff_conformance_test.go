@@ -8,10 +8,10 @@ import (
 	"path"
 	"testing"
 
-	"github.com/bom-squad/protobom/pkg/formats"
-	"github.com/bom-squad/protobom/pkg/reader"
-	"github.com/bom-squad/protobom/pkg/sbom"
-	"github.com/bom-squad/protobom/pkg/writer"
+	"github.com/protobom/protobom/pkg/formats"
+	"github.com/protobom/protobom/pkg/reader"
+	"github.com/protobom/protobom/pkg/sbom"
+	"github.com/protobom/protobom/pkg/writer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,16 +85,16 @@ func TestSerializeDiffTable(t *testing.T) {
 		filesCount   int
 		filesSource  []string
 	}{
-		// {
-		// 	name:         "cdx_1.5_to_spdx_2.3",
-		// 	formatSource: "application/vnd.cyclonedx+json;version=1.5",
-		// 	formatDst:    "text/spdx+json;version=2.3",
-		// 	filesSource: []string{
-		// 		"testdata/cyclonedx/1.5/json/bom-1.5.json",
-		// 		// "testdata/cyclonedx/1.5/json/syft-0.96.0_plone-5.2.cdx.json",
-		// 		// "testdata/cyclonedx/1.5/json/syft-0.96.0_rails-5.0.0.cdx.json",
-		// 	},
-		// },
+		{
+			name:         "cdx_1.5_to_spdx_2.3",
+			formatSource: "application/vnd.cyclonedx+json;version=1.5",
+			formatDst:    "text/spdx+json;version=2.3",
+			filesSource: []string{
+				"testdata/cyclonedx/1.5/json/bom-1.5.json",
+				// "testdata/cyclonedx/1.5/json/syft-0.96.0_plone-5.2.cdx.json",
+				// "testdata/cyclonedx/1.5/json/syft-0.96.0_rails-5.0.0.cdx.json",
+			},
+		},
 		{
 			name:         "spdx_2.3_to_cdx_1.5",
 			formatSource: "text/spdx+json;version=2.3",
